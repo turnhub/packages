@@ -1,0 +1,47 @@
+name: Publish Cloudflare WARP
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Cloudflare WARP macOS version
+        required: true
+        default: 2026.8.2115.0
+  push:
+    branches: [main]
+    paths: [.github/workflows/warp.yml]
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ inputs.version || '2026.8.2115.0' }}
+  GH_REPO: ${{ github.repository }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]] || { echo "Invalid version: $VERSION"; exit 1; }
+          FILE="Cloudflare_WARP_${VERSION}.pkg"
+          curl -fsSL --retry 3 -o "$FILE" "https://downloads.cloudflareclient.com/v1/download/macos/version/${VERSION}"
+          # macOS .pkg files are xar archives
+          [ "$(head -c 4 "$FILE")" = "xar!" ] || { echo "Downloaded file is not a .pkg"; exit 1; }
+          sha256sum "$FILE" | tee "$FILE.sha256"
+          echo "FILE=$FILE" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        run: |
+          TAG="warp-${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" "$FILE.sha256" --clobber
+          else
+            gh release create "$TAG" "$FILE" "$FILE.sha256" \
+              --target "$GITHUB_SHA" \
+              --title "Cloudflare WARP ${VERSION} (macOS)" \
+              --notes "Mirrored from https://downloads.cloudflareclient.com/v1/download/macos/version/${VERSION}"
+          fi
+          echo "https://github.com/${GH_REPO}/releases/download/${TAG}/${FILE}" >> "$GITHUB_STEP_SUMMARY"
